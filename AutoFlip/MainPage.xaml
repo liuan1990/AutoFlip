@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="AutoFlip.MainPage"
+             Title="翻页识别"
+             BackgroundColor="#F4F6F5">
+    <ScrollView>
+        <VerticalStackLayout Padding="22,20,22,32" Spacing="20">
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto">
+                <Label Text="翻页识别" FontSize="26" FontAttributes="Bold" TextColor="#172622" />
+                <Label x:Name="StatusBadge" Grid.Column="1" Text="未启动"
+                       TextColor="#65736E" BackgroundColor="#E4EAE7"
+                       Padding="12,7" VerticalOptions="Center" />
+                <Label Grid.Row="1" Grid.ColumnSpan="2" Text="识别关键词，自动翻到下一页"
+                       FontSize="14" TextColor="#67746F" Margin="0,5,0,0" />
+            </Grid>
+
+            <BoxView HeightRequest="1" Color="#DCE3DF" />
+
+            <VerticalStackLayout Spacing="8">
+                <Label Text="检测关键词" FontSize="15" FontAttributes="Bold" TextColor="#26352F" />
+                <Entry x:Name="KeywordEntry" Placeholder="例如：下一章、继续阅读"
+                       ClearButtonVisibility="WhileEditing" BackgroundColor="White"
+                       TextColor="#172622" PlaceholderColor="#98A39E" />
+                <Label Text="多个词用逗号分隔，任意一个出现时触发"
+                       FontSize="12" TextColor="#7A8580" />
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="10">
+                <Label Text="翻页方向" FontSize="15" FontAttributes="Bold" TextColor="#26352F" />
+                <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
+                    <Button x:Name="UpButton" Text="↑ 上滑" Clicked="OnDirectionClicked" CommandParameter="Up"
+                            CornerRadius="5" HeightRequest="46" />
+                    <Button x:Name="DownButton" Grid.Column="1" Text="↓ 下滑" Clicked="OnDirectionClicked" CommandParameter="Down"
+                            CornerRadius="5" HeightRequest="46" />
+                    <Button x:Name="LeftButton" Grid.Row="1" Text="← 左滑" Clicked="OnDirectionClicked" CommandParameter="Left"
+                            CornerRadius="5" HeightRequest="46" />
+                    <Button x:Name="RightButton" Grid.Row="1" Grid.Column="1" Text="→ 右滑" Clicked="OnDirectionClicked" CommandParameter="Right"
+                            CornerRadius="5" HeightRequest="46" />
+                </Grid>
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="10">
+                <Label Text="识别区域" FontSize="15" FontAttributes="Bold" TextColor="#26352F" />
+                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                    <Button x:Name="TopRegionButton" Text="上 1/3" Clicked="OnRegionClicked" CommandParameter="Top"
+                            CornerRadius="5" HeightRequest="44" />
+                    <Button x:Name="MiddleRegionButton" Grid.Column="1" Text="中 1/3" Clicked="OnRegionClicked" CommandParameter="Middle"
+                            CornerRadius="5" HeightRequest="44" />
+                    <Button x:Name="BottomRegionButton" Grid.Column="2" Text="下 1/3" Clicked="OnRegionClicked" CommandParameter="Bottom"
+                            CornerRadius="5" HeightRequest="44" />
+                </Grid>
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="8">
+                <Label Text="识别频率" FontSize="15" FontAttributes="Bold" TextColor="#26352F" />
+                <Grid ColumnDefinitions="*,Auto" VerticalOptions="Center">
+                    <Slider x:Name="IntervalSlider" Minimum="0.5" Maximum="3" Value="1.5"
+                            MinimumTrackColor="#16866A" MaximumTrackColor="#D5DEDA"
+                            ThumbColor="#16866A" ValueChanged="OnIntervalChanged" />
+                    <Label x:Name="IntervalLabel" Grid.Column="1" Text="2 秒"
+                           TextColor="#52615B" WidthRequest="48" HorizontalTextAlignment="End" />
+                </Grid>
+            </VerticalStackLayout>
+
+            <VerticalStackLayout Spacing="8">
+                <Label Text="滑动冷却时间" FontSize="15" FontAttributes="Bold" TextColor="#26352F" />
+                <Grid ColumnDefinitions="*,Auto" VerticalOptions="Center">
+                    <Slider x:Name="SwipeCooldownSlider" Minimum="0.5" Maximum="10" Value="2"
+                            MinimumTrackColor="#16866A" MaximumTrackColor="#D5DEDA"
+                            ThumbColor="#16866A" ValueChanged="OnSwipeCooldownChanged" />
+                    <Label x:Name="SwipeCooldownLabel" Grid.Column="1" Text="2 秒"
+                           TextColor="#52615B" WidthRequest="48" HorizontalTextAlignment="End" />
+                </Grid>
+            </VerticalStackLayout>
+
+            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="12">
+                <Label Text="自动上滑次数" FontSize="14" TextColor="#52615B" VerticalOptions="Center" />
+                <Label x:Name="SwipeCountLabel" Grid.Column="1" Text="0"
+                       FontSize="16" FontAttributes="Bold" TextColor="#176B56" />
+                <Label Grid.Row="1" Text="成功触发的滑动手势累计次数"
+                       FontSize="12" TextColor="#7A8580" />
+            </Grid>
+
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="12">
+                <VerticalStackLayout Spacing="2">
+                    <Label Text="显示悬浮条" FontSize="14" TextColor="#26352F" />
+                    <Label Text="关闭后后台服务待机，不进行识别"
+                           FontSize="12" TextColor="#7A8580" />
+                </VerticalStackLayout>
+                <Switch x:Name="OverlaySwitch" Grid.Column="1" IsToggled="True"
+                        Toggled="OnOverlayToggled" VerticalOptions="Center"
+                        OnColor="#18C964" ThumbColor="#FFFFFF" />
+            </Grid>
+
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="10">
+                <Button x:Name="ServiceButton" Text="开启无障碍服务" Clicked="OnServiceClicked"
+                        BackgroundColor="#FFFFFF" TextColor="#176B56" BorderColor="#B9D1C7"
+                        BorderWidth="1" CornerRadius="5" HeightRequest="48" />
+                <Button x:Name="RunButton" Grid.Column="1" Text="开始识别" Clicked="OnRunClicked"
+                        BackgroundColor="#16866A" TextColor="White" CornerRadius="5" HeightRequest="48" />
+            </Grid>
+
+            <Grid ColumnDefinitions="Auto,*" ColumnSpacing="10" Margin="0,2,0,0">
+                <BoxView x:Name="ServiceDot" WidthRequest="8" HeightRequest="8"
+                         CornerRadius="4" Color="#E3A63B" VerticalOptions="Center" />
+                <Label x:Name="ServiceStatus" Grid.Column="1"
+                       Text="需先启用系统无障碍服务，之后可在悬浮窗暂停或继续"
+                       FontSize="12" TextColor="#68766F" />
+            </Grid>
+
+            <BoxView HeightRequest="1" Color="#DCE3DF" Margin="0,2,0,0" />
+            <Grid ColumnDefinitions="*,Auto">
+                <Label Text="最近识别" FontSize="13" FontAttributes="Bold" TextColor="#52615B" />
+                <Label x:Name="LastMatchLabel" Grid.Column="1" Text="暂无"
+                       FontSize="12" TextColor="#76827C" />
+            </Grid>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

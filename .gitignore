@@ -1,0 +1,16 @@
+# .NET / .NET MAUI build output
+**/bin/
+**/obj/
+.vs/
+*.user
+*.suo
+
+# Local Android signing material
+*.keystore
+*.jks
+*.apk
+*.aab
+*.idsig
+
+# Local device screenshots and captures
+/phone-*.png
