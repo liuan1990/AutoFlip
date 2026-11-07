@@ -30,6 +30,19 @@ dotnet build .\AutoFlip\AutoFlip.csproj -f net10.0-android
 
 构建产物位于 `AutoFlip/bin/`。本仓库不包含签名密钥；发布签名包时请使用你自己的密钥并妥善保管。
 
+## 下载
+
+前往 [GitHub Releases](https://github.com/liuan1990/AutoFlip/releases/latest) 下载最新 APK。
+
+## 最近更新
+
+### v1.0.1
+
+- 增加截图请求超时恢复，避免单次失败导致识别停止。
+- 增加手势完成/取消回调与失败重试状态。
+- OCR 匹配时忽略空白字符，提升关键词跨空格识别时的命中率。
+- 在控制页显示当前识别与滑动处理状态。
+
 ## 第三方组件与资源
 
 - [.NET MAUI](https://github.com/dotnet/maui)：应用 UI 与 Android 应用框架，MIT License。

@@ -20,6 +20,7 @@ public partial class MainPage : ContentPage
     private const string SwipeCooldownKey = "autoflip.swipeCooldownHalfSeconds";
     private const string OverlayVisibleKey = "autoflip.overlayVisible";
     private const string SwipeCountKey = "autoflip.swipeCount";
+    private const string DiagnosticKey = "autoflip.diagnostic";
     private const string DefaultKeyword = "上滑继续观看";
     private string _direction = "Up";
     private string _region = "Middle";
@@ -110,7 +111,7 @@ public partial class MainPage : ContentPage
     private void OnRefreshTick(object? sender, EventArgs e)
     {
         UpdateRunButton();
-        LastMatchLabel.Text = Preferences.Get("autoflip.lastMatch", "暂无");
+        LastMatchLabel.Text = Preferences.Get(DiagnosticKey, "等待识别");
         SwipeCountLabel.Text = Preferences.Get(SwipeCountKey, 0).ToString();
     }
 

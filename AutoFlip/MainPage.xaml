@@ -111,9 +111,10 @@
 
             <BoxView HeightRequest="1" Color="#DCE3DF" Margin="0,2,0,0" />
             <Grid ColumnDefinitions="*,Auto">
-                <Label Text="最近识别" FontSize="13" FontAttributes="Bold" TextColor="#52615B" />
+                <Label Text="处理状态" FontSize="13" FontAttributes="Bold" TextColor="#52615B" />
                 <Label x:Name="LastMatchLabel" Grid.Column="1" Text="暂无"
-                       FontSize="12" TextColor="#76827C" />
+                       FontSize="12" TextColor="#76827C" MaxLines="2"
+                       LineBreakMode="TailTruncation" HorizontalTextAlignment="End" />
             </Grid>
         </VerticalStackLayout>
     </ScrollView>
