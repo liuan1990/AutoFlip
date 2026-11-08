@@ -42,13 +42,15 @@
 
             <VerticalStackLayout Spacing="10">
                 <Label Text="识别区域" FontSize="15" FontAttributes="Bold" TextColor="#26352F" />
-                <Grid ColumnDefinitions="*,*,*" ColumnSpacing="8">
+                <Grid ColumnDefinitions="*,*" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="8">
                     <Button x:Name="TopRegionButton" Text="上 1/3" Clicked="OnRegionClicked" CommandParameter="Top"
                             CornerRadius="5" HeightRequest="44" />
                     <Button x:Name="MiddleRegionButton" Grid.Column="1" Text="中 1/3" Clicked="OnRegionClicked" CommandParameter="Middle"
                             CornerRadius="5" HeightRequest="44" />
-                    <Button x:Name="BottomRegionButton" Grid.Column="2" Text="下 1/3" Clicked="OnRegionClicked" CommandParameter="Bottom"
+                    <Button x:Name="BottomRegionButton" Grid.Row="1" Text="下 1/3" Clicked="OnRegionClicked" CommandParameter="Bottom"
                             CornerRadius="5" HeightRequest="44" />
+                    <Button x:Name="CustomRegionButton" Grid.Row="1" Grid.Column="1" Text="自定义框选"
+                            Clicked="OnCustomRegionClicked" CornerRadius="5" HeightRequest="44" />
                 </Grid>
             </VerticalStackLayout>
 

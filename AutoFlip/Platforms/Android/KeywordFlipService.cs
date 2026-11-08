@@ -17,6 +17,10 @@ using Microsoft.Maui.Storage;
 using Java.Util.Concurrent;
 using Java.Interop;
 using System.Threading;
+using AndroidView = Android.Views.View;
+using AndroidPaint = Android.Graphics.Paint;
+using AndroidRectF = Android.Graphics.RectF;
+using AndroidColor = Android.Graphics.Color;
 
 namespace AutoFlip;
 
@@ -37,6 +41,8 @@ public sealed class KeywordFlipService : AccessibilityService
     private const string KeywordsKey = "autoflip.keywords";
     private const string DirectionKey = "autoflip.direction";
     private const string RegionKey = "autoflip.region";
+    private const string CustomRegionTopKey = "autoflip.customRegionTopPermille";
+    private const string RegionSelectionRequestedKey = "autoflip.regionSelectionRequested";
     private const string IntervalKey = "autoflip.intervalHalfSeconds";
     private const string SwipeCooldownKey = "autoflip.swipeCooldownHalfSeconds";
     private const string OverlayVisibleKey = "autoflip.overlayVisible";
@@ -53,6 +59,7 @@ public sealed class KeywordFlipService : AccessibilityService
     private LinearLayout? _overlay;
     private TextView? _overlayLabel;
     private WindowManagerLayoutParams? _overlayParams;
+    private RegionSelectorView? _regionSelector;
     private bool _overlayCollapsed;
     private bool _overlayOnRight;
     private bool _foregroundActive;
@@ -99,6 +106,7 @@ public sealed class KeywordFlipService : AccessibilityService
     public override void OnDestroy()
     {
         _handler.RemoveCallbacks(_poll);
+        RemoveRegionSelector(restoreOverlay: false);
         RemoveOverlay();
         _recognizer?.Close();
         base.OnDestroy();
@@ -108,9 +116,17 @@ public sealed class KeywordFlipService : AccessibilityService
     {
         var running = IsRunning();
         UpdateForegroundNotification(running);
-        if (Preferences.Get(OverlayVisibleKey, true))
+        var selectingRegion = Preferences.Get(RegionSelectionRequestedKey, false);
+        if (selectingRegion)
+        {
+            if (_regionSelector is null && Interlocked.Read(ref _activeCaptureId) == 0)
+                CaptureRegionSelectorScreen();
+        }
+        else if (Preferences.Get(OverlayVisibleKey, true))
         {
             CreateOverlay();
+            if (_overlay is not null)
+                _overlay.Visibility = ViewStates.Visible;
             UpdateOverlay();
         }
         else
@@ -138,7 +154,7 @@ public sealed class KeywordFlipService : AccessibilityService
             SetDiagnostic("手势结果超时，1秒后重试");
         }
 
-        if (running && Preferences.Get(OverlayVisibleKey, true) &&
+        if (!selectingRegion && running && Preferences.Get(OverlayVisibleKey, true) &&
             Interlocked.Read(ref _activeCaptureId) == 0)
         {
             var intervalMs = Math.Clamp(Preferences.Get(IntervalKey, 3), 1, 6) * 500L;
@@ -230,6 +246,181 @@ public sealed class KeywordFlipService : AccessibilityService
         }
     }
 
+    private void CaptureRegionSelectorScreen()
+    {
+        if (Build.VERSION.SdkInt < BuildVersionCodes.R || _windowManager is null)
+        {
+            Preferences.Set(RegionSelectionRequestedKey, false);
+            SetDiagnostic("当前设备不支持区域框选");
+            return;
+        }
+
+        var captureId = Interlocked.Increment(ref _captureSequence);
+        if (Interlocked.CompareExchange(ref _activeCaptureId, captureId, 0) != 0)
+            return;
+        if (_overlay is not null)
+            _overlay.Visibility = ViewStates.Invisible;
+        Interlocked.Exchange(ref _captureStartedAt, SystemClock.ElapsedRealtime());
+        try
+        {
+            TakeScreenshot(0, _screenshotExecutor, new RegionSelectorCaptureCallback(this, captureId));
+        }
+        catch (Exception exception)
+        {
+            CompleteCapture(captureId);
+            Log.Warn("KeywordFlipService", $"Region selector screenshot request failed: {exception}");
+            FinishRegionSelectorFailure("无法读取屏幕，区域框选已取消");
+        }
+    }
+
+    private void OnRegionSelectorScreenshot(AccessibilityService.ScreenshotResult result, long captureId)
+    {
+        if (!IsCurrentCapture(captureId))
+        {
+            result.HardwareBuffer?.Close();
+            return;
+        }
+
+        Bitmap? screenshot = null;
+        try
+        {
+            using (var hardwareBitmap = Bitmap.WrapHardwareBuffer(result.HardwareBuffer, result.ColorSpace))
+            {
+                if (hardwareBitmap is not null)
+                    screenshot = hardwareBitmap.Copy(Bitmap.Config.Argb8888!, false);
+            }
+            result.HardwareBuffer?.Close();
+            if (screenshot is null)
+            {
+                CompleteCapture(captureId);
+                FinishRegionSelectorFailure("屏幕截图为空，区域框选已取消");
+                return;
+            }
+
+            var capturedBitmap = screenshot;
+            screenshot = null;
+            _handler.Post(() =>
+            {
+                if (!IsCurrentCapture(captureId))
+                {
+                    capturedBitmap.Recycle();
+                    return;
+                }
+
+                CompleteCapture(captureId);
+                ShowRegionSelector(capturedBitmap);
+            });
+        }
+        catch (Exception exception)
+        {
+            Log.Warn("KeywordFlipService", $"Region selector screenshot failed: {exception}");
+            screenshot?.Recycle();
+            result.HardwareBuffer?.Close();
+            CompleteCapture(captureId);
+            FinishRegionSelectorFailure("屏幕截图失败，区域框选已取消");
+        }
+    }
+
+    private void ShowRegionSelector(Bitmap screenshot)
+    {
+        if (_windowManager is null || _regionSelector is not null)
+        {
+            screenshot.Recycle();
+            return;
+        }
+
+        var topPermille = Math.Clamp(Preferences.Get(CustomRegionTopKey, 900), 10, 990);
+        var selector = new RegionSelectorView(
+            this,
+            screenshot,
+            topPermille / 1000f,
+            OnRegionSelectorSaved,
+            OnRegionSelectorCancelled);
+        var layout = new WindowManagerLayoutParams(
+            WindowManagerLayoutParams.MatchParent,
+            WindowManagerLayoutParams.MatchParent,
+            WindowManagerTypes.AccessibilityOverlay,
+            WindowManagerFlags.NotFocusable |
+            WindowManagerFlags.LayoutInScreen |
+            WindowManagerFlags.LayoutNoLimits,
+            Format.Translucent)
+        {
+            Gravity = GravityFlags.Top | GravityFlags.Left
+        };
+
+        try
+        {
+            _windowManager.AddView(selector, layout);
+            _regionSelector = selector;
+            SetDiagnostic("拖动横线调整识别区域");
+        }
+        catch (Exception exception)
+        {
+            Log.Warn("KeywordFlipService", $"Region selector overlay failed: {exception}");
+            selector.DisposeImage();
+            Preferences.Set(RegionSelectionRequestedKey, false);
+            SetDiagnostic("无法显示区域框选界面");
+            if (_overlay is not null)
+                _overlay.Visibility = ViewStates.Visible;
+            else
+                CreateOverlay();
+        }
+    }
+
+    private void OnRegionSelectorSaved(float topRatio)
+    {
+        var topPermille = Math.Clamp((int)Math.Round(topRatio * 1000), 10, 990);
+        Preferences.Set(CustomRegionTopKey, topPermille);
+        Preferences.Set(RegionKey, "Custom");
+        Preferences.Set(RegionSelectionRequestedKey, false);
+        SetDiagnostic($"已保存自定义识别区域 ({1000 - topPermille}‰ 屏高)");
+        RemoveRegionSelector(restoreOverlay: true);
+        UpdateOverlay();
+    }
+
+    private void OnRegionSelectorCancelled()
+    {
+        Preferences.Set(RegionSelectionRequestedKey, false);
+        SetDiagnostic("已取消区域框选");
+        RemoveRegionSelector(restoreOverlay: true);
+    }
+
+    private void FinishRegionSelectorFailure(string message)
+    {
+        _handler.Post(() =>
+        {
+            Preferences.Set(RegionSelectionRequestedKey, false);
+            SetDiagnostic(message);
+            RemoveRegionSelector(restoreOverlay: true);
+            CreateOverlay();
+        });
+    }
+
+    private void RemoveRegionSelector(bool restoreOverlay)
+    {
+        if (_regionSelector is not null)
+        {
+            try
+            {
+                _windowManager?.RemoveView(_regionSelector);
+            }
+            catch (Exception)
+            {
+            }
+            _regionSelector.DisposeImage();
+            _regionSelector = null;
+        }
+
+        if (restoreOverlay && Preferences.Get(OverlayVisibleKey, true))
+        {
+            if (_overlay is not null)
+                _overlay.Visibility = ViewStates.Visible;
+            else
+                CreateOverlay();
+            UpdateOverlay();
+        }
+    }
+
     private void OnScreenshot(AccessibilityService.ScreenshotResult result, long captureId)
     {
         if (!IsCurrentCapture(captureId))
@@ -258,13 +449,18 @@ public sealed class KeywordFlipService : AccessibilityService
 
             var region = Preferences.Get(RegionKey, "Middle");
             var thirdHeight = Math.Max(1, sourceBitmap.Height / 3);
+            var customTop = Math.Clamp(Preferences.Get(CustomRegionTopKey, 900), 0, 990);
             var top = region switch
             {
                 "Top" => 0,
                 "Bottom" => sourceBitmap.Height - thirdHeight,
+                "Custom" => sourceBitmap.Height * customTop / 1000,
                 _ => (sourceBitmap.Height - thirdHeight) / 2
             };
-            recognitionBitmap = Bitmap.CreateBitmap(sourceBitmap, 0, top, sourceBitmap.Width, thirdHeight);
+            var recognitionHeight = region == "Custom"
+                ? Math.Max(1, sourceBitmap.Height - top)
+                : thirdHeight;
+            recognitionBitmap = Bitmap.CreateBitmap(sourceBitmap, 0, top, sourceBitmap.Width, recognitionHeight);
             MaskOverlayFromRecognition(recognitionBitmap, top);
             sourceBitmap.Recycle();
             sourceBitmap = null;
@@ -310,7 +506,7 @@ public sealed class KeywordFlipService : AccessibilityService
                 return;
             }
 
-            if (!IsRunning())
+            if (!IsRunning() || Preferences.Get(RegionSelectionRequestedKey, false))
                 return;
 
             if (!_keywordActive)
@@ -664,6 +860,12 @@ public sealed class KeywordFlipService : AccessibilityService
         UpdateOverlay();
     }
 
+    private void RequestRegionSelection()
+    {
+        Preferences.Set(RegionSelectionRequestedKey, true);
+        SetDiagnostic("正在准备区域框选");
+    }
+
     private static bool IsRunning() => Preferences.Get(RunningKey, false);
     private static void SetRunning(bool running) => Preferences.Set(RunningKey, running);
 
@@ -673,6 +875,33 @@ public sealed class KeywordFlipService : AccessibilityService
             .Select(value => value.Trim())
             .Where(value => value.Length > 0)
             .ToArray();
+
+    private sealed class RegionSelectorCaptureCallback(KeywordFlipService owner, long captureId)
+        : Java.Lang.Object, AccessibilityService.ITakeScreenshotCallback
+    {
+        public void OnSuccess(AccessibilityService.ScreenshotResult? screenshot)
+        {
+            if (screenshot is null)
+            {
+                if (!owner.IsCurrentCapture(captureId))
+                    return;
+                owner.CompleteCapture(captureId);
+                owner.FinishRegionSelectorFailure("系统未返回截图，区域框选已取消");
+                return;
+            }
+
+            owner.OnRegionSelectorScreenshot(screenshot, captureId);
+        }
+
+        public void OnFailure(int errorCode)
+        {
+            if (!owner.IsCurrentCapture(captureId))
+                return;
+            owner.CompleteCapture(captureId);
+            owner.LogScreenshotFailure(errorCode);
+            owner.FinishRegionSelectorFailure($"系统截图失败 ({errorCode})，区域框选已取消");
+        }
+    }
 
     private sealed class ScreenCaptureCallback(KeywordFlipService owner, long captureId) : Java.Lang.Object, AccessibilityService.ITakeScreenshotCallback
     {
@@ -714,6 +943,186 @@ public sealed class KeywordFlipService : AccessibilityService
     private sealed class OcrFailureListener(KeywordFlipService owner, Bitmap bitmap, long captureId) : Java.Lang.Object, IOnFailureListener
     {
         public void OnFailure(Java.Lang.Exception? error) => owner.OnOcrFailure(bitmap, captureId, error);
+    }
+
+    private sealed class RegionSelectorView : AndroidView
+    {
+        private readonly Bitmap _screenshot;
+        private readonly System.Action<float> _onSave;
+        private readonly System.Action _onCancel;
+        private readonly AndroidPaint _paint = new(PaintFlags.AntiAlias);
+        private float _topRatio;
+        private bool _dragging;
+        private int _pressedButton;
+        private bool _disposed;
+        private AndroidRectF _cancelBounds = new();
+        private AndroidRectF _saveBounds = new();
+
+        public RegionSelectorView(
+            KeywordFlipService owner,
+            Bitmap screenshot,
+            float initialTopRatio,
+            System.Action<float> onSave,
+            System.Action onCancel) : base(owner)
+        {
+            _screenshot = screenshot;
+            _topRatio = initialTopRatio;
+            _onSave = onSave;
+            _onCancel = onCancel;
+            ContentDescription = "自定义识别区域。拖动水平分界线调整区域高度。";
+        }
+
+        public void DisposeImage()
+        {
+            if (_disposed)
+                return;
+            _disposed = true;
+            _screenshot.Recycle();
+        }
+
+        protected override void OnDraw(Canvas canvas)
+        {
+            base.OnDraw(canvas);
+            var width = Width;
+            var height = Height;
+            if (width <= 0 || height <= 0 || _screenshot.IsRecycled)
+                return;
+
+            var density = Resources?.DisplayMetrics?.Density ?? 1f;
+            var boundaryY = height * _topRatio;
+            var screenRect = new Android.Graphics.Rect(0, 0, width, height);
+            _paint.Reset();
+            _paint.AntiAlias = true;
+            _paint.FilterBitmap = true;
+            canvas.DrawBitmap(_screenshot, null, screenRect, _paint);
+
+            _paint.Reset();
+            _paint.Color = AndroidColor.Argb(168, 4, 9, 8);
+            canvas.DrawRect(0, 0, width, boundaryY, _paint);
+
+            _paint.Color = AndroidColor.Argb(28, 16, 190, 133);
+            canvas.DrawRect(0, boundaryY, width, height, _paint);
+
+            _paint.Color = AndroidColor.Argb(62, 242, 255, 250);
+            _paint.StrokeWidth = Math.Max(1, density * 0.6f);
+            for (var x = width / 3f; x < width; x += width / 3f)
+                canvas.DrawLine(x, boundaryY, x, height, _paint);
+            for (var y = boundaryY + (height - boundaryY) / 3f; y < height; y += (height - boundaryY) / 3f)
+                canvas.DrawLine(0, y, width, y, _paint);
+
+            _paint.Color = AndroidColor.Rgb(38, 226, 172);
+            _paint.StrokeWidth = Math.Max(2, density * 2);
+            canvas.DrawLine(0, boundaryY, width, boundaryY, _paint);
+
+            var handleWidth = 34 * density;
+            var handleHeight = 7 * density;
+            var handle = new AndroidRectF(
+                width / 2f - handleWidth / 2f,
+                boundaryY - handleHeight / 2f,
+                width / 2f + handleWidth / 2f,
+                boundaryY + handleHeight / 2f);
+            _paint.Color = AndroidColor.Argb(210, 0, 0, 0);
+            canvas.DrawRoundRect(handle, handleHeight / 2f, handleHeight / 2f, _paint);
+            handle.Inset(1.5f * density, 1.5f * density);
+            _paint.Color = AndroidColor.White;
+            canvas.DrawRoundRect(handle, handleHeight / 2f, handleHeight / 2f, _paint);
+
+            DrawTitle(canvas, width, density);
+            DrawActionButtons(canvas, width, height, boundaryY, density);
+        }
+
+        private void DrawTitle(Canvas canvas, int width, float density)
+        {
+            var left = 16 * density;
+            var top = 54 * density;
+            var title = new AndroidRectF(left, top, width - left, top + 42 * density);
+            _paint.Color = AndroidColor.Argb(220, 15, 23, 21);
+            canvas.DrawRoundRect(title, 12 * density, 12 * density, _paint);
+            _paint.Color = AndroidColor.White;
+            _paint.TextSize = 16 * density;
+            _paint.SetTypeface(Typeface.Create("sans-serif-medium", TypefaceStyle.Normal));
+            _paint.TextAlign = AndroidPaint.Align.Left;
+            var centerY = (title.Top + title.Bottom) / 2f;
+            canvas.DrawText("自定义识别区域", title.Left + 14 * density, centerY + 5 * density, _paint);
+            _paint.TextSize = 13 * density;
+            _paint.Color = AndroidColor.Rgb(158, 242, 217);
+            _paint.TextAlign = AndroidPaint.Align.Right;
+            canvas.DrawText("全屏宽", title.Right - 14 * density, centerY + 4 * density, _paint);
+        }
+
+        private void DrawActionButtons(Canvas canvas, int width, int height, float boundaryY, float density)
+        {
+            var margin = 16 * density;
+            var gap = 10 * density;
+            var buttonHeight = 44 * density;
+            var safeGap = 12 * density;
+            var selectedSpace = height - boundaryY;
+            var discardedSpace = boundaryY;
+
+            var fitsSelected = selectedSpace >= buttonHeight + safeGap * 2;
+            var fitsDiscarded = discardedSpace >= buttonHeight + safeGap * 2;
+            var useSelected = fitsSelected || (!fitsDiscarded && selectedSpace >= discardedSpace);
+            var top = useSelected
+                ? Math.Min(height - buttonHeight - safeGap, boundaryY + safeGap)
+                : Math.Max(safeGap, boundaryY - buttonHeight - safeGap);
+            var buttonWidth = (width - margin * 2 - gap) / 2f;
+            _cancelBounds = new AndroidRectF(margin, top, margin + buttonWidth, top + buttonHeight);
+            _saveBounds = new AndroidRectF(margin + buttonWidth + gap, top, width - margin, top + buttonHeight);
+
+            DrawButton(canvas, _cancelBounds, "取消", AndroidColor.Rgb(39, 49, 46), density);
+            DrawButton(canvas, _saveBounds, "保存", AndroidColor.Rgb(22, 168, 120), density);
+        }
+
+        private void DrawButton(Canvas canvas, AndroidRectF bounds, string text, AndroidColor background, float density)
+        {
+            _paint.Color = background;
+            canvas.DrawRoundRect(bounds, 8 * density, 8 * density, _paint);
+            _paint.Color = AndroidColor.White;
+            _paint.TextSize = 16 * density;
+            _paint.SetTypeface(Typeface.Create("sans-serif-medium", TypefaceStyle.Normal));
+            _paint.TextAlign = AndroidPaint.Align.Center;
+            canvas.DrawText(text, (bounds.Left + bounds.Right) / 2f, (bounds.Top + bounds.Bottom) / 2f + 5 * density, _paint);
+        }
+
+        public override bool OnTouchEvent(MotionEvent? e)
+        {
+            if (e is null)
+                return true;
+
+            var density = Resources?.DisplayMetrics?.Density ?? 1f;
+            var boundaryY = Height * _topRatio;
+            switch (e.Action)
+            {
+                case MotionEventActions.Down:
+                    _pressedButton = _cancelBounds.Contains(e.GetX(), e.GetY()) ? 1 :
+                        _saveBounds.Contains(e.GetX(), e.GetY()) ? 2 : 0;
+                    _dragging = _pressedButton == 0 && Math.Abs(e.GetY() - boundaryY) <= 34 * density;
+                    return true;
+                case MotionEventActions.Move:
+                    if (_dragging)
+                    {
+                        var minTop = Math.Max(40 * density, Height * 0.01f);
+                        var maxTop = Height - Math.Max(40 * density, Height * 0.01f);
+                        _topRatio = Math.Clamp(e.GetY(), minTop, maxTop) / Math.Max(1f, Height);
+                        Invalidate();
+                    }
+                    return true;
+                case MotionEventActions.Up:
+                    if (_pressedButton == 1 && _cancelBounds.Contains(e.GetX(), e.GetY()))
+                        _onCancel();
+                    else if (_pressedButton == 2 && _saveBounds.Contains(e.GetX(), e.GetY()))
+                        _onSave(_topRatio);
+                    _dragging = false;
+                    _pressedButton = 0;
+                    return true;
+                case MotionEventActions.Cancel:
+                    _dragging = false;
+                    _pressedButton = 0;
+                    return true;
+                default:
+                    return true;
+            }
+        }
     }
 
     private sealed class OverlayTouchListener(KeywordFlipService owner) : Java.Lang.Object, Android.Views.View.IOnTouchListener
@@ -761,6 +1170,8 @@ public sealed class KeywordFlipService : AccessibilityService
                         owner._windowManager.UpdateViewLayout(owner._overlay, owner._overlayParams);
                         owner.SetOverlayCollapsed(true);
                     }
+                    else if (e.EventTime - e.DownTime >= 700)
+                        owner.RequestRegionSelection();
                     else if (owner._overlayCollapsed)
                         owner.SetOverlayCollapsed(false);
                     else

@@ -5,7 +5,7 @@ AutoFlip 是一个 Android 辅助工具：在用户明确开启 Android 无障�
 ## 功能
 
 - 自定义触发关键词，支持多个关键词
-- 选择上、中、下三分之一区域进行文字识别
+- 选择上、中、下三分之一区域，或通过浮动控件长按/控制页自定义框选 OCR 识别区域
 - 设置识别间隔、滑动冷却时间和滑动方向
 - 浮动状态控件用于暂停/恢复识别，并显示滑动计数
 - OCR 在设备端通过 Google ML Kit 中文文本识别组件执行
@@ -35,6 +35,11 @@ dotnet build .\AutoFlip\AutoFlip.csproj -f net10.0-android
 前往 [GitHub Releases](https://github.com/liuan1990/AutoFlip/releases/latest) 下载最新 APK。
 
 ## 最近更新
+
+### v1.0.2
+
+- 新增自定义 OCR 识别区域，可拖动分界线调整识别范围，提高目标文字识别准确率。
+- 支持从控制页或长按浮动控件进入区域框选，并可保存或取消。
 
 ### v1.0.1
 

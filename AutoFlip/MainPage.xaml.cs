@@ -16,6 +16,7 @@ public partial class MainPage : ContentPage
     private const string KeywordsKey = "autoflip.keywords";
     private const string DirectionKey = "autoflip.direction";
     private const string RegionKey = "autoflip.region";
+    private const string RegionSelectionRequestedKey = "autoflip.regionSelectionRequested";
     private const string IntervalKey = "autoflip.intervalHalfSeconds";
     private const string SwipeCooldownKey = "autoflip.swipeCooldownHalfSeconds";
     private const string OverlayVisibleKey = "autoflip.overlayVisible";
@@ -108,11 +109,31 @@ public partial class MainPage : ContentPage
         }
     }
 
+    private async void OnCustomRegionClicked(object? sender, EventArgs e)
+    {
+        if (!IsAccessibilityServiceEnabled())
+        {
+            await DisplayAlertAsync("需要无障碍权限", "请先启用“翻页识别”无障碍服务后再框选识别区域。", "前往设置");
+            OnServiceClicked(sender, e);
+            return;
+        }
+
+        Preferences.Set(RegionSelectionRequestedKey, true);
+        LastMatchLabel.Text = "正在准备区域框选";
+        Platform.CurrentActivity?.MoveTaskToBack(true);
+    }
+
     private void OnRefreshTick(object? sender, EventArgs e)
     {
         UpdateRunButton();
         LastMatchLabel.Text = Preferences.Get(DiagnosticKey, "等待识别");
         SwipeCountLabel.Text = Preferences.Get(SwipeCountKey, 0).ToString();
+        var region = Preferences.Get(RegionKey, "Middle");
+        if (_region != region)
+        {
+            _region = region;
+            UpdateRegionButtons();
+        }
     }
 
     private async void OnServiceClicked(object? sender, EventArgs e)
@@ -176,6 +197,7 @@ public partial class MainPage : ContentPage
         SetButtonSelection(TopRegionButton, _region == "Top");
         SetButtonSelection(MiddleRegionButton, _region == "Middle");
         SetButtonSelection(BottomRegionButton, _region == "Bottom");
+        SetButtonSelection(CustomRegionButton, _region == "Custom");
     }
 
     private static void SetButtonSelection(Button button, bool selected)
